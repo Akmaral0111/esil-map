@@ -2,7 +2,7 @@
 <html lang="ru">
 <head>
     <meta charset="UTF-8">
-    <title>ГИС Есильский район — Стабильный Маршрут</title>
+    <title>ГИС Есильский район — Идеальный Поиск Адресов</title>
     
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
@@ -12,149 +12,245 @@
 
     <style>
         body, html { margin: 0; padding: 0; height: 100%; font-family: sans-serif; }
-        #map { width: 100%; height: 100%; background: #ffffff; } /* Белый фон для карты, когда подложка отключена */
+        #map { width: 100%; height: 100%; background: #ffffff; }
         #panel {
             position: absolute; top: 20px; left: 20px;
             background: white; padding: 20px; border-radius: 8px;
-            box-shadow: 0 4px 10px rgba(0,0,0,0.3); z-index: 1000; max-width: 320px;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.3); z-index: 1000; width: 340px;
         }
-        h3 { margin-top: 0; color: #0044aa; }
-        .info { font-size: 13px; color: #555; }
+        h3 { margin-top: 0; color: #0044aa; margin-bottom: 15px; }
+        
+        .search-group { display: flex; flex-direction: column; gap: 10px; margin-bottom: 15px; }
+        .search-container { position: relative; display: flex; align-items: center; }
+        .search-badge {
+            background: #0066ff; color: white; border-radius: 50%; 
+            width: 22px; height: 22px; display: flex; align-items: center; 
+            justify-content: center; font-size: 12px; font-weight: bold; margin-right: 8px; flex-shrink: 0;
+        }
+        .search-badge.point-b { background: #ff4400; }
+        
+        .search-input {
+            width: 100%; padding: 8px 10px; box-sizing: border-box; 
+            border: 1px solid #ccc; border-radius: 6px; font-size: 13px;
+        }
+        .search-results {
+            position: absolute; top: 100%; left: 30px; right: 0; background: white; 
+            border: 1px solid #ccc; max-height: 180px; overflow-y: auto; 
+            z-index: 2000; border-radius: 4px; box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
+        .search-item { padding: 8px 12px; cursor: pointer; font-size: 12px; border-bottom: 1px solid #eee; }
+        .search-item:hover { background: #f0f4f8; color: #0044aa; }
+
         .layer-toggle {
-            margin-top: 15px;
-            padding: 10px;
-            background: #f0f4f8;
-            border-radius: 6px;
-            font-size: 14px;
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            cursor: pointer;
+            margin-top: 10px; padding: 10px; background: #f0f4f8;
+            border-radius: 6px; font-size: 13px; display: flex; align-items: center; gap: 8px; cursor: pointer;
         }
         .layer-toggle input { cursor: pointer; }
-        /* Прячем стандартную текстовую инструкцию Leaflet, оставляем только красивую линию */
         .leaflet-routing-container { display: none; }
+        #route-result { font-size: 13px; margin-top: 10px; }
     </style>
 </head>
 <body>
 
     <div id="panel">
         <h3>ГИС Есильский район</h3>
-        <p class="info">Построение точного автодорожного маршрута между объектами eGov.</p>
-        <hr>
         
+        <div class="search-group">
+            <div class="search-container">
+                <div class="search-badge">А</div>
+                <input type="text" id="search-a" class="search-input" placeholder="Откуда (например: Сауран 12/1)..." autocomplete="off">
+                <div id="results-a" class="search-results" style="display: none;"></div>
+            </div>
+            
+            <div class="search-container">
+                <div class="search-badge point-b">Б</div>
+                <input type="text" id="search-b" class="search-input" placeholder="Куда (на рус. или каз.)..." autocomplete="off">
+                <div id="results-b" class="search-results" style="display: none;"></div>
+            </div>
+        </div>
+
         <label class="layer-toggle">
             <input type="checkbox" id="toggle-osm" checked>
             <span>Показывать карту-подложку</span>
         </label>
         
         <hr>
-        <p><strong>Инструкция:</strong> Кликните по двум точкам для построения маршрута по дорожной сети.</p>
-        <div id="route-result">Слои успешно загружены!</div>
+        <div id="route-result">Загрузка слоев...</div>
     </div>
 
     <div id="map"></div>
 
     <script>
-        // Центрируем карту на Есильском районе
         var map = L.map('map').setView([51.1110, 71.4305], 14);
 
-        // Создаем слой базовой карты OpenStreetMap
         var osmLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
             attribution: '&copy; OpenStreetMap'
-        }).addTo(map); // По умолчанию добавляем её на карту
+        }).addTo(map);
 
         var routingControl = null;
         var startLatLng = null;
         var endLatLng = null;
+        var allPointsFeatures = [];
+        var markersMap = {};
 
-        // Логика работы переключателя подложки
+        // Переключатель подложки
         document.getElementById('toggle-osm').addEventListener('change', function(e) {
-            if (e.target.checked) {
-                map.addLayer(osmLayer); // Включаем карту-подложку обратно
-            } else {
-                map.removeLayer(osmLayer); // Полностью убираем подложку, оставляя белый экран
-            }
+            if (e.target.checked) { map.addLayer(osmLayer); } 
+            else { map.removeLayer(osmLayer); }
         });
 
-        // 1. Загрузка твоих фиолетовых дорог из QGIS для визуального контроля
+        // Загрузка фиолетовых дорог
         fetch('roads.geojson')
             .then(response => response.json())
             .then(data => {
-                L.geoJSON(data, {
-                    style: { color: '#8800ff', weight: 3, opacity: 0.4 }
-                }).addTo(map);
-                console.log("Твои дороги отображены!");
-            })
-            .catch(err => console.error("Ошибка загрузки дорог:", err));
+                L.geoJSON(data, { style: { color: '#8800ff', weight: 3, opacity: 0.4 } }).addTo(map);
+            }).catch(err => console.error(err));
 
-        // 2. Загрузка твоих оранжевых точек eGov
-        fetch('points.geojson')
+        // Функция "смягчения" текста (убирает буквы, чтобы Сауран 12/1 и Сауран 12/1 искались одинаково)
+        function normalizeForSearch(text) {
+            if (!text) return "";
+            return text.toLowerCase()
+                .replace(/[әә]/g, 'а').replace(/[іі]/g, 'и')
+                .replace(/[ңң]/g, 'н').replace(/[ғғ]/g, 'g')
+                .replace(/[үү]/g, 'у').replace(/[ұұ]/g, 'у')
+                .replace(/[ққ]/g, 'к').replace(/[өө]/g, 'о')
+                .replace(/[һһ]/g, 'х').replace(/ё/g, 'е').replace(/й/g, 'и')
+                .replace(/\s*\/\s*/g, '/') // убирает пробелы вокруг дроби
+                .replace(/[^a-zа-я0-9\s\/]/gi, '')
+                .replace(/\s+/g, ' ')
+                .trim();
+        }
+
+        // ЗАГРУЖАЕМ НАШ НОВЫЙ ОЧИЩЕННЫЙ ФАЙЛ ИЗ ПАЙТОНА
+        fetch('points_clean.geojson')
             .then(response => response.json())
             .then(data => {
+                allPointsFeatures = data.features;
+                document.getElementById('route-result').innerHTML = "База eGov успешно очищена! Введите адреса.";
+
                 L.geoJSON(data, {
                     pointToLayer: function (feature, latlng) {
-                        return L.circleMarker(latlng, {
+                        var marker = L.circleMarker(latlng, {
                             radius: 6, fillColor: "#ff4400", color: "#fff", weight: 1, opacity: 1, fillOpacity: 0.8
                         });
+                        
+                        // Используем уже готовую чистую колонку clean_rus из Python
+                        var addressRus = feature.properties.clean_rus || "Адрес";
+                        markersMap[addressRus] = marker;
+                        return marker;
                     },
                     onEachFeature: function (feature, layer) {
-                        var address = feature.properties.full_path_rus || "Адрес не указан";
-                        layer.bindPopup(`<b>Адрес:</b> ${address}`);
-                        layer.on('click', function(e) { handleRouteSelection(e.latlng); });
+                        var addressRus = feature.properties.clean_rus || "Не указан";
+                        var addressKaz = feature.properties.clean_kaz || "Не указан";
+                        
+                        layer.bindPopup(`<b>Адрес (РУС):</b> ${addressRus}<br><b>Адрес (КАЗ):</b> ${addressKaz}`);
+                        layer.on('click', function(e) { 
+                            if (!startLatLng) {
+                                selectPointForField('a', feature, e.latlng);
+                            } else {
+                                selectPointForField('b', feature, e.latlng);
+                            }
+                        });
                     }
                 }).addTo(map);
-                console.log("Твои точки загружены!");
-            })
-            .catch(err => {
-                document.getElementById('route-result').innerHTML = 
-                    `<b style="color:red;">Ошибка загрузки данных! Проверьте локальный сервер.</b>`;
+            }).catch(err => {
+                document.getElementById('route-result').innerHTML = "<span style='color:red;'>Ошибка! Убедись, что файл 'points_clean.geojson' лежит в папке 'маршрут'.</span>";
+                console.error(err);
             });
 
-        // Логика выбора точек кликом
-        function handleRouteSelection(latlng) {
-            if (!startLatLng) {
+        // Поиск по двум полям
+        setupLocalSearch('search-a', 'results-a', 'a');
+        setupLocalSearch('search-b', 'results-b', 'b');
+
+        function setupLocalSearch(inputId, resultsId, type) {
+            var input = document.getElementById(inputId);
+            var results = document.getElementById(resultsId);
+
+            input.addEventListener('input', function(e) {
+                var query = normalizeForSearch(e.target.value);
+                results.innerHTML = '';
+                
+                if (query.length < 2) {
+                    results.style.display = 'none';
+                    return;
+                }
+
+                // Ищем по предварительно очищенным в Python колонкам
+                var matches = allPointsFeatures.filter(function(f) {
+                    var normRus = normalizeForSearch(f.properties.clean_rus);
+                    var normKaz = normalizeForSearch(f.properties.clean_kaz);
+                    return normRus.includes(query) || normKaz.includes(query);
+                });
+
+                if (matches.length === 0) {
+                    results.innerHTML = '<div class="search-item" style="color:gray;">Ничего не найдено</div>';
+                    results.style.display = 'block';
+                    return;
+                }
+
+                matches.slice(0, 6).forEach(function(feature) {
+                    var addressRus = feature.properties.clean_rus || "";
+                    var addressKaz = feature.properties.clean_kaz || "";
+                    
+                    var item = document.createElement('div');
+                    item.className = 'search-item';
+                    item.innerText = addressKaz && addressKaz !== addressRus ? `${addressRus} / ${addressKaz}` : addressRus;
+                    
+                    item.addEventListener('click', function() {
+                        var coords = feature.geometry.coordinates;
+                        var latlng = L.latLng(coords[1], coords[0]);
+                        selectPointForField(type, feature, latlng);
+                        results.style.display = 'none';
+                    });
+                    results.appendChild(item);
+                });
+                results.style.display = 'block';
+            });
+        }
+
+        function selectPointForField(type, feature, latlng) {
+            var addressRus = feature.properties.clean_rus || "";
+            
+            if (type === 'a') {
                 startLatLng = latlng;
-                document.getElementById('route-result').innerHTML = 'Точка А выбрана. Выберите точку Б.';
-            } else if (!endLatLng) {
-                endLatLng = latlng;
-                buildRoute(startLatLng, endLatLng);
+                document.getElementById('search-a').value = addressRus;
+                map.setView(latlng, 17);
+                if (markersMap[addressRus]) markersMap[addressRus].openPopup();
             } else {
-                // Сброс при третьем клике
-                startLatLng = latlng;
-                endLatLng = null;
-                if (routingControl) map.removeControl(routingControl);
-                document.getElementById('route-result').innerHTML = 'Точка А выбрана заново. Выберите точку Б.';
+                endLatLng = latlng;
+                document.getElementById('search-b').value = addressRus;
+                map.setView(latlng, 17);
+                if (markersMap[addressRus]) markersMap[addressRus].openPopup();
+            }
+
+            if (startLatLng && endLatLng) {
+                buildRoute(startLatLng, endLatLng);
             }
         }
 
-        // Построение извилистого дорожного маршрута (OSRM работает всегда)
+        map.on('click', function() {
+            document.getElementById('results-a').style.display = 'none';
+            document.getElementById('results-b').style.display = 'none';
+        });
+
         function buildRoute(start, end) {
             if (routingControl) map.removeControl(routingControl);
 
             routingControl = L.Routing.control({
-                waypoints: [
-                    L.latLng(start.lat, start.lng),
-                    L.latLng(end.lat, end.lng)
-                ],
-                router: L.Routing.osrmv1({
-                    serviceUrl: 'https://router.project-osrm.org/route/v1' 
-                }),
-                lineStyle: {
-                    styles: [{ color: '#0066ff', opacity: 0.85, weight: 6 }]
-                },
-                createMarker: function() { return null; } 
+                waypoints: [L.latLng(start.lat, start.lng), L.latLng(end.lat, end.lng)],
+                router: L.Routing.osrmv1({ serviceUrl: 'https://router.project-osrm.org/route/v1' }),
+                lineStyle: { styles: [{ color: '#0066ff', opacity: 0.85, weight: 6 }] },
+                createMarker: function(i, wp) {
+                    return L.marker(wp.latLng).addTo(map).bindPopup(i === 0 ? 'Точка А' : 'Точка Б');
+                }
             }).addTo(map);
 
-            // Выводим информацию о завершении
             routingControl.on('routesfound', function(e) {
                 var routes = e.routes;
-                var summary = routes[0].summary;
-                var distanceKm = (summary.totalDistance / 1000).toFixed(2);
-                
+                var distanceKm = (routes[0].summary.totalDistance / 1000).toFixed(2);
                 document.getElementById('route-result').innerHTML = `
-                    <p style="color:green;"><b>Маршрут успешно построен!</b></p>
-                    <p>🛣️ <b>Расстояние по дорогам:</b> ${distanceKm} км</p>
+                    <p style="color:green; margin:0 0 5px 0;"><b>Маршрут успешно построен!</b></p>
+                    <p style="margin:0;">🛣️ <b>Расстояние по дорогам:</b> ${distanceKm} км</p>
                 `;
             });
         }
