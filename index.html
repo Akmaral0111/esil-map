@@ -2,7 +2,7 @@
 <html lang="ru">
 <head>
     <meta charset="UTF-8">
-    <title>ГИС Есильский район — Идеальный Поиск Адресов</title>
+    <title>ГИС Есильский район — АФС Астана</title>
     
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
@@ -42,7 +42,7 @@
         .search-item:hover { background: #f0f4f8; color: #0044aa; }
 
         .layer-toggle {
-            margin-top: 10px; padding: 10px; background: #f0f4f8;
+            margin-top: 8px; padding: 10px; background: #f0f4f8;
             border-radius: 6px; font-size: 13px; display: flex; align-items: center; gap: 8px; cursor: pointer;
         }
         .layer-toggle input { cursor: pointer; }
@@ -58,20 +58,25 @@
         <div class="search-group">
             <div class="search-container">
                 <div class="search-badge">А</div>
-                <input type="text" id="search-a" class="search-input" placeholder="Откуда (например: Сауран 12/1)..." autocomplete="off">
+                <input type="text" id="search-a" class="search-input" placeholder="Откуда..." autocomplete="off">
                 <div id="results-a" class="search-results" style="display: none;"></div>
             </div>
             
             <div class="search-container">
                 <div class="search-badge point-b">Б</div>
-                <input type="text" id="search-b" class="search-input" placeholder="Куда (на рус. или каз.)..." autocomplete="off">
+                <input type="text" id="search-b" class="search-input" placeholder="Куда..." autocomplete="off">
                 <div id="results-b" class="search-results" style="display: none;"></div>
             </div>
         </div>
 
+        <label class="layer-toggle" style="background: #eafaf1;">
+            <input type="checkbox" id="toggle-afs" checked>
+            <span style="font-weight: bold; color: #1e7e34;">📷 Аэрофотосъемка (Астана)</span>
+        </label>
+
         <label class="layer-toggle">
-            <input type="checkbox" id="toggle-osm" checked>
-            <span>Показывать карту-подложку</span>
+            <input type="checkbox" id="toggle-osm">
+            <span>Карта-подложка</span>
         </label>
         
         <hr>
@@ -83,8 +88,18 @@
     <script>
         var map = L.map('map').setView([51.1110, 71.4305], 14);
 
+        // 1. Обычная карта-подложка (выключена на старте)
         var osmLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
             attribution: '&copy; OpenStreetMap'
+        });
+
+        // 2. Слой АФС (включен на старте)
+        var afsLayer = L.tileLayer.wms('https://map.gov.kz/geoserver/wms', {
+            layers: 'geonode:astana',
+            format: 'image/png',
+            transparent: true,
+            version: '1.3.0',
+            attribution: '&copy; map.gov.kz АФС Астана'
         }).addTo(map);
 
         var routingControl = null;
@@ -93,20 +108,42 @@
         var allPointsFeatures = [];
         var markersMap = {};
 
-        // Переключатель подложки
+        // Логика кнопок переключения подложек
         document.getElementById('toggle-osm').addEventListener('change', function(e) {
             if (e.target.checked) { map.addLayer(osmLayer); } 
             else { map.removeLayer(osmLayer); }
         });
 
-        // Загрузка фиолетовых дорог
+        document.getElementById('toggle-afs').addEventListener('change', function(e) {
+            if (e.target.checked) { afsLayer.addTo(map); } 
+            else { map.removeLayer(afsLayer); }
+        });
+
+        // Загрузка фиолетовых дорог (всегда на карте)
         fetch('roads.geojson')
             .then(response => response.json())
             .then(data => {
                 L.geoJSON(data, { style: { color: '#8800ff', weight: 3, opacity: 0.4 } }).addTo(map);
             }).catch(err => console.error(err));
 
-        // Функция "смягчения" текста (убирает буквы, чтобы Сауран 12/1 и Сауран 12/1 искались одинаково)
+        // ЗАГРУЗКА СЛОЯ ЗДАНИЙ (Всегда на карте, без галочки в интерфейсе)
+        fetch('buildings.geojson')
+            .then(response => response.json())
+            .then(data => {
+                L.geoJSON(data, {
+                    style: {
+                        color: "#e28743",    // Красивый оранжево-коричневый контур
+                        weight: 1.5,         // Тонкая линия
+                        fillColor: "#e28743", 
+                        fillOpacity: 0.25    // Полупрозрачная заливка
+                    },
+                    onEachFeature: function (feature, layer) {
+                        var name = feature.properties.name || feature.properties.display_name || "Здание";
+                        layer.bindPopup(`<b>Объект:</b> ${name}`);
+                    }
+                }).addTo(map); // Сразу добавляем на карту
+            }).catch(err => console.error("Ошибка загрузки зданий:", err));
+
         function normalizeForSearch(text) {
             if (!text) return "";
             return text.toLowerCase()
@@ -115,26 +152,24 @@
                 .replace(/[үү]/g, 'у').replace(/[ұұ]/g, 'у')
                 .replace(/[ққ]/g, 'к').replace(/[өө]/g, 'о')
                 .replace(/[һһ]/g, 'х').replace(/ё/g, 'е').replace(/й/g, 'и')
-                .replace(/\s*\/\s*/g, '/') // убирает пробелы вокруг дроби
+                .replace(/\s*\/\s*/g, '/')
                 .replace(/[^a-zа-я0-9\s\/]/gi, '')
                 .replace(/\s+/g, ' ')
                 .trim();
         }
 
-        // ЗАГРУЖАЕМ НАШ НОВЫЙ ОЧИЩЕННЫЙ ФАЙЛ ИЗ ПАЙТОНА
+        // Загрузка очищенных точек
         fetch('points_clean.geojson')
             .then(response => response.json())
             .then(data => {
                 allPointsFeatures = data.features;
-                document.getElementById('route-result').innerHTML = "База eGov успешно очищена! Введите адреса.";
+                document.getElementById('route-result').innerHTML = "Все слои успешно запущены по умолчанию!";
 
                 L.geoJSON(data, {
                     pointToLayer: function (feature, latlng) {
                         var marker = L.circleMarker(latlng, {
                             radius: 6, fillColor: "#ff4400", color: "#fff", weight: 1, opacity: 1, fillOpacity: 0.8
                         });
-                        
-                        // Используем уже готовую чистую колонку clean_rus из Python
                         var addressRus = feature.properties.clean_rus || "Адрес";
                         markersMap[addressRus] = marker;
                         return marker;
@@ -142,23 +177,15 @@
                     onEachFeature: function (feature, layer) {
                         var addressRus = feature.properties.clean_rus || "Не указан";
                         var addressKaz = feature.properties.clean_kaz || "Не указан";
-                        
                         layer.bindPopup(`<b>Адрес (РУС):</b> ${addressRus}<br><b>Адрес (КАЗ):</b> ${addressKaz}`);
                         layer.on('click', function(e) { 
-                            if (!startLatLng) {
-                                selectPointForField('a', feature, e.latlng);
-                            } else {
-                                selectPointForField('b', feature, e.latlng);
-                            }
+                            if (!startLatLng) { selectPointForField('a', feature, e.latlng); } 
+                            else { selectPointForField('b', feature, e.latlng); }
                         });
                     }
                 }).addTo(map);
-            }).catch(err => {
-                document.getElementById('route-result').innerHTML = "<span style='color:red;'>Ошибка! Убедись, что файл 'points_clean.geojson' лежит в папке 'маршрут'.</span>";
-                console.error(err);
-            });
+            }).catch(err => console.error(err));
 
-        // Поиск по двум полям
         setupLocalSearch('search-a', 'results-a', 'a');
         setupLocalSearch('search-b', 'results-b', 'b');
 
@@ -169,13 +196,8 @@
             input.addEventListener('input', function(e) {
                 var query = normalizeForSearch(e.target.value);
                 results.innerHTML = '';
-                
-                if (query.length < 2) {
-                    results.style.display = 'none';
-                    return;
-                }
+                if (query.length < 2) { results.style.display = 'none'; return; }
 
-                // Ищем по предварительно очищенным в Python колонкам
                 var matches = allPointsFeatures.filter(function(f) {
                     var normRus = normalizeForSearch(f.properties.clean_rus);
                     var normKaz = normalizeForSearch(f.properties.clean_kaz);
@@ -191,15 +213,12 @@
                 matches.slice(0, 6).forEach(function(feature) {
                     var addressRus = feature.properties.clean_rus || "";
                     var addressKaz = feature.properties.clean_kaz || "";
-                    
                     var item = document.createElement('div');
                     item.className = 'search-item';
                     item.innerText = addressKaz && addressKaz !== addressRus ? `${addressRus} / ${addressKaz}` : addressRus;
-                    
                     item.addEventListener('click', function() {
                         var coords = feature.geometry.coordinates;
-                        var latlng = L.latLng(coords[1], coords[0]);
-                        selectPointForField(type, feature, latlng);
+                        selectPointForField(type, feature, L.latLng(coords[1], coords[0]));
                         results.style.display = 'none';
                     });
                     results.appendChild(item);
@@ -210,7 +229,6 @@
 
         function selectPointForField(type, feature, latlng) {
             var addressRus = feature.properties.clean_rus || "";
-            
             if (type === 'a') {
                 startLatLng = latlng;
                 document.getElementById('search-a').value = addressRus;
@@ -222,10 +240,7 @@
                 map.setView(latlng, 17);
                 if (markersMap[addressRus]) markersMap[addressRus].openPopup();
             }
-
-            if (startLatLng && endLatLng) {
-                buildRoute(startLatLng, endLatLng);
-            }
+            if (startLatLng && endLatLng) { buildRoute(startLatLng, endLatLng); }
         }
 
         map.on('click', function() {
@@ -235,19 +250,15 @@
 
         function buildRoute(start, end) {
             if (routingControl) map.removeControl(routingControl);
-
             routingControl = L.Routing.control({
                 waypoints: [L.latLng(start.lat, start.lng), L.latLng(end.lat, end.lng)],
                 router: L.Routing.osrmv1({ serviceUrl: 'https://router.project-osrm.org/route/v1' }),
                 lineStyle: { styles: [{ color: '#0066ff', opacity: 0.85, weight: 6 }] },
-                createMarker: function(i, wp) {
-                    return L.marker(wp.latLng).addTo(map).bindPopup(i === 0 ? 'Точка А' : 'Точка Б');
-                }
+                createMarker: function(i, wp) { return L.marker(wp.latLng).addTo(map).bindPopup(i === 0 ? 'Точка А' : 'Точка Б'); }
             }).addTo(map);
 
             routingControl.on('routesfound', function(e) {
-                var routes = e.routes;
-                var distanceKm = (routes[0].summary.totalDistance / 1000).toFixed(2);
+                var distanceKm = (e.routes[0].summary.totalDistance / 1000).toFixed(2);
                 document.getElementById('route-result').innerHTML = `
                     <p style="color:green; margin:0 0 5px 0;"><b>Маршрут успешно построен!</b></p>
                     <p style="margin:0;">🛣️ <b>Расстояние по дорогам:</b> ${distanceKm} км</p>
